@@ -1,0 +1,316 @@
+---
+title: "plot CRISPR sgRNA"
+author: "Karen Chu"
+date: "2/19/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Library
+
+```{r lib}
+library(openxlsx)
+library(dplyr)
+library(Biostrings)
+library(stringr)
+library(ggplot2)
+
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(BSgenome.Hsapiens.UCSC.hg19)
+```
+
+Work dir
+
+```{r work dir}
+figures.dir <- "~/Desktop/Mybbp1a/figures/"
+output.dir <- "~/Desktop/Mybbp1a/output/"
+```
+
+Import data
+
+```{r data}
+df.original <- read.xlsx("~/Desktop/Mybbp1a/data/DiuNguyen_DomainScreening_human_Mybbp1a.xlsx", sheet=2)
+df <- df.original[ ,(ncol(df.original)-2):ncol(df.original)]
+rownames(df) <- df.original$NAME
+```
+
+Get genomic coords of gene of interest
+
+```{r genomic coords}
+txdb.genes = genes(TxDb.Hsapiens.UCSC.hg19.knownGene)
+
+# Get genomic coord of gene
+gene.coords <- subset(txdb.genes, gene_id==10514) 
+```
+
+Get sequence of gene of interest.
+
+```{r seq}
+genome <- BSgenome.Hsapiens.UCSC.hg19
+
+# Obtain sequence
+gene.seq <- Biostrings::getSeq(genome, gene.coords) # second argument needs grange object with coordinates'
+
+# Obtain sequence as string
+gene.seq.df <- as.data.frame(gene.seq) 
+```
+
+Get reverse complement of sequence because Mybbp1a is on - strand and some sgRNA are not pattern matching to it
+
+```{r reverse}
+reverse.gene.seq <- reverseComplement(gene.seq)
+reverse.gene.seq.df <- as.data.frame(reverse.gene.seq) 
+```
+
+
+Obtain start and end position of sgRNA sequence in gene sequence on + strand
+
+```{r index}
+setwd(output.dir)
+
+df.positive.strand <- df
+
+df.positive.strand$start.pos <- NA
+df.positive.strand$end.pos <- NA
+
+for (i in 1:nrow(df)) {
+  
+  sgRNA.index <- gregexpr(df.positive.strand$SEQ[i], gene.seq.df) # Returns positions of every match in a string
+  start.pos <- unlist(sgRNA.index)
+  end.pos <- start.pos + attr(sgRNA.index[[1]],'match.length') # Add start position with length of match
+  
+  # Add positions to dataframe
+  df.positive.strand$start.pos[i] <- start.pos
+  df.positive.strand$end.pos[i] <- end.pos
+  
+}
+
+write.csv(df.positive.strand, "Mybbp1a_sgRNA_matched_index_positive_strand.csv")
+```
+
+
+Obtain start and end position of sgRNA sequence in gene sequence on - strand
+
+
+```{r index}
+setwd(output.dir)
+
+df.negative.strand <- df
+
+df.negative.strand$start.pos <- NA
+df.negative.strand$end.pos <- NA
+
+for (i in 1:nrow(df)) {
+  
+  sgRNA.index <- gregexpr(df.negative.strand$SEQ[i], reverse.gene.seq.df) # Returns positions of every match in a string
+  start.pos <- unlist(sgRNA.index)
+  end.pos <- start.pos + attr(sgRNA.index[[1]],'match.length') # Add start position with length of match
+  
+  # Add positions to dataframe
+  df.negative.strand$start.pos[i] <- start.pos
+  df.negative.strand$end.pos[i] <- end.pos
+  
+}
+
+write.csv(df.negative.strand, "Mybbp1a_sgRNA_matched_index_negative_strand.csv")
+```
+
+Combine positions of sgRNA from + and - strand together.
+
+```{r combine}
+setwd(output.dir)
+
+# Subset out control sgRNAs because not needed in plot
+gene.only.positive.strand <- subset(df.positive.strand, grepl("MYBBP1A", rownames(df.positive.strand)))
+gene.only.negative.strand <- subset(df.negative.strand, grepl("MYBBP1A", rownames(df.negative.strand)))
+
+# Obtain index of sgRNA matching to opposite strand
+missing.value.index.positive.strand <- which(gene.only.positive.strand$start.pos==-1)
+missing.value.index.negative.strand <- which(gene.only.negative.strand$start.pos==-1)
+
+# Create final dataframe with start and end positions from + and - strand
+df.final <- gene.only.positive.strand
+df.final$start.pos[missing.value.index.positive.strand] <- gene.only.negative.strand$start.pos[missing.value.index.positive.strand]
+df.final$end.pos[missing.value.index.positive.strand] <- gene.only.negative.strand$end.pos[missing.value.index.positive.strand]
+
+write.csv(df.final, "Mybbp1a_sgRNA_matched_index_final_plot_input.csv")
+```
+
+Get exon coordinates of gene of interest.
+
+```{r exon}
+setwd(output.dir)
+
+# Get genomic coordinates of transcripts
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+transcripts <- transcriptsBy(txdb, by="gene")
+gene.transcripts.index <- subjectHits( findOverlaps(gene.coords, transcripts) )
+gene.transcripts.final <- transcripts[gene.transcripts.index]
+
+gene.transcripts.final.df <- as.data.frame(gene.transcripts.final)
+tx_names <- gene.transcripts.final.df$tx_name
+exons <- exonsBy(txdb, "tx", use.names=TRUE)[tx_names]
+
+write.csv(exons[[1]], "Mybbp1a_exon_coordinates_isoform_1.csv")
+write.csv(exons[[2]], "Mybbp1a_exon_coordinates_isoform_2.csv")
+write.csv(exons[[3]], "Mybbp1a_exon_coordinates_isoform_3.csv")
+write.csv(exons[[4]], "Mybbp1a_exon_coordinates_isoform_4.csv")
+```
+
+Calculate exon positions relative to start position
+
+```{r position relative to start}
+# Calculate positions relative to if start of gene is 0 coordinate
+
+calculate.relative.position <- function(exons.df) {
+  
+  isoform<- as.data.frame(exons.df)
+  isoform$start.relative <- isoform$start - start(gene.coords )
+  isoform$end.relative <- isoform$end - start(gene.coords)
+  
+  return(isoform)
+  
+}
+
+isoform.one <- calculate.relative.position(exons[[1]])
+isoform.two <- calculate.relative.position(exons[[2]])
+isoform.three <- calculate.relative.position(exons[[3]])
+isoform.four <- calculate.relative.position(exons[[4]])
+```
+
+Plot gene with sgRNA logfc
+Plot negative and positive sgRNA logfc separately for visual aesthetics.
+
+```{r mid point}
+setwd(figures.dir)
+
+# Calculate mid-point between start and end pos
+df.final$mid.point <- df.final$start.pos + ( (df.final$end.pos - df.final$start.pos) /2)
+
+# Change negative logfc to positive
+negative.logfc.only <- subset(df.final, Logfc < 0)
+negative.logfc.only$Logfc <- negative.logfc.only$Logfc*-1
+positive.logfc.only <- subset(df.final, Logfc >= 0)
+
+plot.gene <- function(df.input, isoform.input, isoform.name, pos.or.neg.logfc) {
+  
+  png(paste0("MYBBP1A_sgRNA_", pos.or.neg.logfc, "_", isoform.name, ".png"), 1500, 500)
+  p<-ggplot(data=df.input, aes(x=mid.point, y=Logfc)) +
+    geom_bar(stat="identity", fill="darkred", width=50) +
+    geom_segment(x=0, y= -0.3,
+                 xend=nchar(gene.seq.df$x), 
+                 yend= -0.3,
+                 size=3, color="black") +
+    theme_minimal() +
+    #xlab("\nGene Coordinates") + 
+    ggtitle(paste0("MYBBP1A: ", pos.or.neg.logfc, " sgRNAs in ", isoform.name, "\n")) +
+    ylab("Log Fold Change\n") +
+    ylim(0,max(c(negative.logfc.only$Logfc, positive.logfc.only$Logfc)+0.5)) + 
+    theme(plot.title = element_text(size=22),
+          axis.title.x=element_blank(),
+          axis.text.x=element_blank(),
+          axis.ticks.x=element_blank(),
+          axis.text.y   = element_text(size=20),
+          #axis.text.x   = element_text(size=20),
+          axis.title.y  = element_text(size=20),
+          #axis.title.x  = element_text(size=20),
+          panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(colour = "black"),
+          panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+    coord_cartesian(clip="off") +
+    theme(plot.margin=unit(c(2,2,2,2),"cm"))
+
+  # Add geom segments with for loop
+  for (i in 1:nrow(isoform.input)) {
+     p <- p + geom_segment(x=isoform.input$start.relative[i], y= -0.3, 
+                           xend=isoform.input$end.relative[i], yend= -0.3,
+                           size=5,
+                           color="gray")
+  }
+  
+  print(p)
+  
+  dev.off()
+  
+}
+
+plot.gene(negative.logfc.only, isoform.one, "Isoform.One", "Negative.Logfc")
+plot.gene(negative.logfc.only, isoform.two, "Isoform.Two", "Negative.Logfc")
+plot.gene(negative.logfc.only, isoform.three, "Isoform.Three", "Negative.Logfc")
+plot.gene(negative.logfc.only, isoform.four, "Isoform.Four", "Negative.Logfc")
+
+plot.gene(positive.logfc.only, isoform.one, "Isoform.One", "Positive.Logfc")
+plot.gene(positive.logfc.only, isoform.two, "Isoform.Two", "Positive.Logfc")
+plot.gene(positive.logfc.only, isoform.three, "Isoform.Three", "Positive.Logfc")
+plot.gene(positive.logfc.only, isoform.four, "Isoform.Four", "Positive.Logfc")
+```
+
+Positive and negative logfc on same plot
+
+```{r combined plot}
+setwd(figures.dir)
+
+# Calculate mid-point between start and end pos
+df.final$mid.point <- df.final$start.pos + ( (df.final$end.pos - df.final$start.pos) /2)
+
+plot.gene <- function(df.input, isoform.input, isoform.name) {
+  
+  png(paste0("MYBBP1A_sgRNA_", isoform.name, ".png"), 1500, 500)
+  p<-ggplot(data=df.input, aes(x=mid.point, y=Logfc)) +
+    geom_bar(stat="identity", fill="darkred", width=50) +
+    geom_segment(x=0, y= 0,
+                 xend=nchar(gene.seq.df$x),
+                 yend= 0,
+                 size=3, color="black") +
+    theme_minimal() +
+    #xlab("\nGene Coordinates") + 
+    ggtitle(paste0("MYBBP1A: sgRNAs in ", isoform.name, "\n")) +
+    ylab("Log Fold Change\n") +
+    #xlim(50,500) +
+    theme(plot.title = element_text(size=22),
+          axis.title.x=element_blank(),
+          axis.text.x=element_blank(),
+          axis.ticks.x=element_blank(),
+          axis.text.y   = element_text(size=20),
+          #axis.text.x   = element_text(size=20),
+          axis.title.y  = element_text(size=20),
+          #axis.title.x  = element_text(size=20),
+          panel.background = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          axis.line = element_line(colour = "black"),
+          panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+    coord_cartesian(clip="off") +
+    theme(plot.margin=unit(c(2,2,2,2),"cm"))
+
+  # Add geom segments with for loop
+  for (i in 1:nrow(isoform.input)) {
+     p <- p + geom_segment(x=isoform.input$start.relative[i], y= 0, 
+                           xend=isoform.input$end.relative[i], yend= 0,
+                           size=5,
+                           color="gray")
+  }
+  
+  print(p)
+  
+  dev.off()
+  
+}
+
+plot.gene(df.final, isoform.one, "Isoform.One")
+plot.gene(df.final, isoform.two, "Isoform.Two")
+plot.gene(df.final, isoform.three, "Isoform.Three")
+plot.gene(df.final, isoform.four, "Isoform.Four")
+
+```
+
+
+
+
+
+
