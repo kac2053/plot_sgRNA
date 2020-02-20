@@ -25,15 +25,15 @@ library(BSgenome.Hsapiens.UCSC.hg19)
 Work dir
 
 ```{r work dir}
-figures.dir <- "~/Desktop/Mybbp1a/figures/"
-output.dir <- "~/Desktop/Mybbp1a/output/"
+figures.dir <- "~/Desktop/Nynrin/figures/"
+output.dir <- "~/Desktop/Nynrin/output/"
 ```
 
 Import data
 
 ```{r data}
-df.original <- read.xlsx("~/Desktop/Mybbp1a/data/DiuNguyen_DomainScreening_human_Mybbp1a.xlsx", sheet=2)
-df <- df.original[ ,(ncol(df.original)-2):ncol(df.original)]
+df.original <- read.csv("~/Desktop/Nynrin/data/NYNRIN_D3_vs_D17_All_Karen.csv")
+df <- df.original %>% dplyr::select(c("logFC", "SEQ"))
 rownames(df) <- df.original$NAME
 ```
 
@@ -43,7 +43,7 @@ Get genomic coords of gene of interest
 txdb.genes = genes(TxDb.Hsapiens.UCSC.hg19.knownGene)
 
 # Get genomic coord of gene
-gene.coords <- subset(txdb.genes, gene_id==10514) 
+gene.coords <- subset(txdb.genes, gene_id==57523) 
 ```
 
 Get sequence of gene of interest.
@@ -58,7 +58,7 @@ gene.seq <- Biostrings::getSeq(genome, gene.coords) # second argument needs gran
 gene.seq.df <- as.data.frame(gene.seq) 
 ```
 
-Get reverse complement of sequence because Mybbp1a is on - strand and some sgRNA are not pattern matching to it
+Get reverse complement of sequence
 
 ```{r reverse}
 reverse.gene.seq <- reverseComplement(gene.seq)
@@ -88,7 +88,7 @@ for (i in 1:nrow(df)) {
   
 }
 
-write.csv(df.positive.strand, "Mybbp1a_sgRNA_matched_index_positive_strand.csv")
+write.csv(df.positive.strand, "Nynrin_sgRNA_matched_index_positive_strand.csv")
 ```
 
 
@@ -115,7 +115,7 @@ for (i in 1:nrow(df)) {
   
 }
 
-write.csv(df.negative.strand, "Mybbp1a_sgRNA_matched_index_negative_strand.csv")
+write.csv(df.negative.strand, "Nynrin_sgRNA_matched_index_negative_strand.csv")
 ```
 
 Combine positions of sgRNA from + and - strand together.
@@ -124,8 +124,8 @@ Combine positions of sgRNA from + and - strand together.
 setwd(output.dir)
 
 # Subset out control sgRNAs because not needed in plot
-gene.only.positive.strand <- subset(df.positive.strand, grepl("MYBBP1A", rownames(df.positive.strand)))
-gene.only.negative.strand <- subset(df.negative.strand, grepl("MYBBP1A", rownames(df.negative.strand)))
+gene.only.positive.strand <- subset(df.positive.strand, grepl("NYNRIN", rownames(df.positive.strand)))
+gene.only.negative.strand <- subset(df.negative.strand, grepl("NYNRIN", rownames(df.negative.strand)))
 
 # Obtain index of sgRNA matching to opposite strand
 missing.value.index.positive.strand <- which(gene.only.positive.strand$start.pos==-1)
@@ -136,7 +136,7 @@ df.final <- gene.only.positive.strand
 df.final$start.pos[missing.value.index.positive.strand] <- gene.only.negative.strand$start.pos[missing.value.index.positive.strand]
 df.final$end.pos[missing.value.index.positive.strand] <- gene.only.negative.strand$end.pos[missing.value.index.positive.strand]
 
-write.csv(df.final, "Mybbp1a_sgRNA_matched_index_final_plot_input.csv")
+write.csv(df.final, "Nynrin_sgRNA_matched_index_final_plot_input.csv")
 ```
 
 Get exon coordinates of gene of interest.
@@ -154,10 +154,7 @@ gene.transcripts.final.df <- as.data.frame(gene.transcripts.final)
 tx_names <- gene.transcripts.final.df$tx_name
 exons <- exonsBy(txdb, "tx", use.names=TRUE)[tx_names]
 
-write.csv(exons[[1]], "Mybbp1a_exon_coordinates_isoform_1.csv")
-write.csv(exons[[2]], "Mybbp1a_exon_coordinates_isoform_2.csv")
-write.csv(exons[[3]], "Mybbp1a_exon_coordinates_isoform_3.csv")
-write.csv(exons[[4]], "Mybbp1a_exon_coordinates_isoform_4.csv")
+write.csv(exons[[1]], "Nynrin_exon_coordinates.csv")
 ```
 
 Calculate exon positions relative to start position
@@ -176,9 +173,6 @@ calculate.relative.position <- function(exons.df) {
 }
 
 isoform.one <- calculate.relative.position(exons[[1]])
-isoform.two <- calculate.relative.position(exons[[2]])
-isoform.three <- calculate.relative.position(exons[[3]])
-isoform.four <- calculate.relative.position(exons[[4]])
 ```
 
 Plot gene with sgRNA logfc
@@ -189,26 +183,27 @@ setwd(figures.dir)
 
 # Calculate mid-point between start and end pos
 df.final$mid.point <- df.final$start.pos + ( (df.final$end.pos - df.final$start.pos) /2)
+df.final <- subset(df.final, start.pos != -1)
 
 # Change negative logfc to positive
-negative.logfc.only <- subset(df.final, Logfc < 0)
-negative.logfc.only$Logfc <- negative.logfc.only$Logfc*-1
-positive.logfc.only <- subset(df.final, Logfc >= 0)
+negative.logfc.only <- subset(df.final, logFC < 0)
+negative.logfc.only$logFC <- negative.logfc.only$logFC*-1
+positive.logfc.only <- subset(df.final, logFC >= 0)
 
-plot.gene <- function(df.input, isoform.input, isoform.name, pos.or.neg.logfc) {
+plot.gene <- function(df.input, isoform.input, pos.or.neg.logfc) {
   
-  png(paste0("MYBBP1A_sgRNA_", pos.or.neg.logfc, "_", isoform.name, ".png"), 1500, 500)
-  p<-ggplot(data=df.input, aes(x=mid.point, y=Logfc)) +
+  png(paste0("Nynrin_sgRNA_", pos.or.neg.logfc, ".png"), 1500, 500)
+  p<-ggplot(data=df.input, aes(x=mid.point, y=logFC)) +
     geom_bar(stat="identity", fill="darkred", width=50) +
-    geom_segment(x=0, y= -0.3,
+    geom_segment(x=0, y= -0.4,
                  xend=nchar(gene.seq.df$x), 
-                 yend= -0.3,
+                 yend= -0.4,
                  size=3, color="black") +
     theme_minimal() +
     #xlab("\nGene Coordinates") + 
-    ggtitle(paste0("MYBBP1A: ", pos.or.neg.logfc, " sgRNAs in ", isoform.name, "\n")) +
+    ggtitle(paste0("Nynrin: ", pos.or.neg.logfc, " sgRNAs\n")) +
     ylab("Log Fold Change\n") +
-    ylim(0,max(c(negative.logfc.only$Logfc, positive.logfc.only$Logfc)+0.5)) + 
+    ylim(0,max(c(negative.logfc.only$logFC, positive.logfc.only$logFC))+0.5) + 
     theme(plot.title = element_text(size=22),
           axis.title.x=element_blank(),
           axis.text.x=element_blank(),
@@ -227,8 +222,8 @@ plot.gene <- function(df.input, isoform.input, isoform.name, pos.or.neg.logfc) {
 
   # Add geom segments with for loop
   for (i in 1:nrow(isoform.input)) {
-     p <- p + geom_segment(x=isoform.input$start.relative[i], y= -0.3, 
-                           xend=isoform.input$end.relative[i], yend= -0.3,
+     p <- p + geom_segment(x=isoform.input$start.relative[i], y= -0.4, 
+                           xend=isoform.input$end.relative[i], yend= -0.4,
                            size=5,
                            color="gray")
   }
@@ -239,15 +234,8 @@ plot.gene <- function(df.input, isoform.input, isoform.name, pos.or.neg.logfc) {
   
 }
 
-plot.gene(negative.logfc.only, isoform.one, "Isoform.One", "Negative.Logfc")
-plot.gene(negative.logfc.only, isoform.two, "Isoform.Two", "Negative.Logfc")
-plot.gene(negative.logfc.only, isoform.three, "Isoform.Three", "Negative.Logfc")
-plot.gene(negative.logfc.only, isoform.four, "Isoform.Four", "Negative.Logfc")
-
-plot.gene(positive.logfc.only, isoform.one, "Isoform.One", "Positive.Logfc")
-plot.gene(positive.logfc.only, isoform.two, "Isoform.Two", "Positive.Logfc")
-plot.gene(positive.logfc.only, isoform.three, "Isoform.Three", "Positive.Logfc")
-plot.gene(positive.logfc.only, isoform.four, "Isoform.Four", "Positive.Logfc")
+plot.gene(negative.logfc.only, isoform.one, "Negative.Logfc")
+plot.gene(positive.logfc.only, isoform.one, "Positive.Logfc")
 ```
 
 Positive and negative logfc on same plot
@@ -260,18 +248,17 @@ df.final$mid.point <- df.final$start.pos + ( (df.final$end.pos - df.final$start.
 
 plot.gene <- function(df.input, isoform.input, isoform.name) {
   
-  png(paste0("MYBBP1A_sgRNA_", isoform.name, ".png"), 1500, 500)
-  p<-ggplot(data=df.input, aes(x=mid.point, y=Logfc)) +
+  png(paste0("Nynrin_sgRNA.png"), 1200, 500)
+  p<-ggplot(data=df.input, aes(x=mid.point, y=logFC)) +
     geom_bar(stat="identity", fill="darkred", width=50) +
     geom_segment(x=0, y= 0,
                  xend=nchar(gene.seq.df$x),
                  yend= 0,
                  size=3, color="black") +
     theme_minimal() +
-    #xlab("\nGene Coordinates") + 
-    ggtitle(paste0("MYBBP1A: sgRNAs in ", isoform.name, "\n")) +
+    ggtitle(paste0("Nynrin: sgRNAs\n")) +
     ylab("Log Fold Change\n") +
-    #xlim(50,500) +
+    ylim( (max(abs(df.final$logFC))+0.25)*-1, max(abs(df.final$logFC))+0.25) +
     theme(plot.title = element_text(size=22),
           axis.title.x=element_blank(),
           axis.text.x=element_blank(),
@@ -302,10 +289,7 @@ plot.gene <- function(df.input, isoform.input, isoform.name) {
   
 }
 
-plot.gene(df.final, isoform.one, "Isoform.One")
-plot.gene(df.final, isoform.two, "Isoform.Two")
-plot.gene(df.final, isoform.three, "Isoform.Three")
-plot.gene(df.final, isoform.four, "Isoform.Four")
+plot.gene(df.final, isoform.one)
 
 ```
 
