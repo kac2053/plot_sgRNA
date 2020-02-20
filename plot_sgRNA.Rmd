@@ -65,6 +65,11 @@ reverse.gene.seq <- reverseComplement(gene.seq)
 reverse.gene.seq.df <- as.data.frame(reverse.gene.seq) 
 ```
 
+Remove controls
+
+```{r controls}
+df <- subset(df, !(grepl("Safe|Control", rownames(df))) )
+```
 
 Obtain start and end position of sgRNA sequence in gene sequence on + strand
 
@@ -80,11 +85,20 @@ for (i in 1:nrow(df)) {
   
   sgRNA.index <- gregexpr(df.positive.strand$SEQ[i], gene.seq.df) # Returns positions of every match in a string
   start.pos <- unlist(sgRNA.index)
-  end.pos <- start.pos + attr(sgRNA.index[[1]],'match.length') # Add start position with length of match
   
-  # Add positions to dataframe
-  df.positive.strand$start.pos[i] <- start.pos
-  df.positive.strand$end.pos[i] <- end.pos
+  if ( start.pos == -1 ) {
+    
+    next
+    
+  } else { 
+    
+    end.pos <- start.pos + attr(sgRNA.index[[1]],'match.length') # Add start position with length of match
+  
+    # Add positions to dataframe
+    df.positive.strand$start.pos[i] <- start(gene.coords) + start.pos - 1
+    df.positive.strand$end.pos[i] <- start(gene.coords) + end.pos - 1
+    
+    }
   
 }
 
@@ -107,11 +121,19 @@ for (i in 1:nrow(df)) {
   
   sgRNA.index <- gregexpr(df.negative.strand$SEQ[i], reverse.gene.seq.df) # Returns positions of every match in a string
   start.pos <- unlist(sgRNA.index)
-  end.pos <- start.pos + attr(sgRNA.index[[1]],'match.length') # Add start position with length of match
+  if ( start.pos == -1 ) {
+
+    next
+    
+  } else { 
+    
+    # Add positions to dataframe
+    # Add or subtract 1 because of R indexing
+    df.negative.strand$start.pos[i] <- end(gene.coords) - start.pos - attr(sgRNA.index[[1]],'match.length') + 1
+    df.negative.strand$end.pos[i] <- end(gene.coords) - start.pos + 1
+    
+    }
   
-  # Add positions to dataframe
-  df.negative.strand$start.pos[i] <- start.pos
-  df.negative.strand$end.pos[i] <- end.pos
   
 }
 
@@ -123,18 +145,14 @@ Combine positions of sgRNA from + and - strand together.
 ```{r combine}
 setwd(output.dir)
 
-# Subset out control sgRNAs because not needed in plot
-gene.only.positive.strand <- subset(df.positive.strand, grepl("NYNRIN", rownames(df.positive.strand)))
-gene.only.negative.strand <- subset(df.negative.strand, grepl("NYNRIN", rownames(df.negative.strand)))
-
 # Obtain index of sgRNA matching to opposite strand
-missing.value.index.positive.strand <- which(gene.only.positive.strand$start.pos==-1)
-missing.value.index.negative.strand <- which(gene.only.negative.strand$start.pos==-1)
+missing.value.index.positive.strand <- which( is.na(df.positive.strand$start.pos))
+missing.value.index.negative.strand <- which( is.na(df.negative.strand$start.pos))
 
 # Create final dataframe with start and end positions from + and - strand
-df.final <- gene.only.positive.strand
-df.final$start.pos[missing.value.index.positive.strand] <- gene.only.negative.strand$start.pos[missing.value.index.positive.strand]
-df.final$end.pos[missing.value.index.positive.strand] <- gene.only.negative.strand$end.pos[missing.value.index.positive.strand]
+df.final <- df.positive.strand
+df.final$start.pos[missing.value.index.positive.strand] <- df.negative.strand$start.pos[missing.value.index.positive.strand]
+df.final$end.pos[missing.value.index.positive.strand] <- df.negative.strand$end.pos[missing.value.index.positive.strand]
 
 write.csv(df.final, "Nynrin_sgRNA_matched_index_final_plot_input.csv")
 ```
@@ -183,7 +201,6 @@ setwd(figures.dir)
 
 # Calculate mid-point between start and end pos
 df.final$mid.point <- df.final$start.pos + ( (df.final$end.pos - df.final$start.pos) /2)
-df.final <- subset(df.final, start.pos != -1)
 
 # Change negative logfc to positive
 negative.logfc.only <- subset(df.final, logFC < 0)
@@ -195,14 +212,15 @@ plot.gene <- function(df.input, isoform.input, pos.or.neg.logfc) {
   png(paste0("Nynrin_sgRNA_", pos.or.neg.logfc, ".png"), 1500, 500)
   p<-ggplot(data=df.input, aes(x=mid.point, y=logFC)) +
     geom_bar(stat="identity", fill="darkred", width=50) +
-    geom_segment(x=0, y= -0.4,
-                 xend=nchar(gene.seq.df$x), 
+    geom_segment(x=start(gene.coords), y= -0.4,
+                 xend=end(gene.coords), 
                  yend= -0.4,
                  size=3, color="black") +
     theme_minimal() +
     #xlab("\nGene Coordinates") + 
     ggtitle(paste0("Nynrin: ", pos.or.neg.logfc, " sgRNAs\n")) +
     ylab("Log Fold Change\n") +
+    xlim( start(gene.coords), end(gene.coords) ) +
     ylim(0,max(c(negative.logfc.only$logFC, positive.logfc.only$logFC))+0.5) + 
     theme(plot.title = element_text(size=22),
           axis.title.x=element_blank(),
@@ -222,8 +240,8 @@ plot.gene <- function(df.input, isoform.input, pos.or.neg.logfc) {
 
   # Add geom segments with for loop
   for (i in 1:nrow(isoform.input)) {
-     p <- p + geom_segment(x=isoform.input$start.relative[i], y= -0.4, 
-                           xend=isoform.input$end.relative[i], yend= -0.4,
+     p <- p + geom_segment(x=isoform.input$start[i], y= -0.4, 
+                           xend=isoform.input$end[i], yend= -0.4,
                            size=5,
                            color="gray")
   }
@@ -251,13 +269,14 @@ plot.gene <- function(df.input, isoform.input, isoform.name) {
   png(paste0("Nynrin_sgRNA.png"), 1200, 500)
   p<-ggplot(data=df.input, aes(x=mid.point, y=logFC)) +
     geom_bar(stat="identity", fill="darkred", width=50) +
-    geom_segment(x=0, y= 0,
-                 xend=nchar(gene.seq.df$x),
+    geom_segment(x=start(gene.coords), y= 0,
+                 xend=end(gene.coords),
                  yend= 0,
                  size=3, color="black") +
     theme_minimal() +
     ggtitle(paste0("Nynrin: sgRNAs\n")) +
     ylab("Log Fold Change\n") +
+    xlim( start(gene.coords), end(gene.coords) ) +
     ylim( (max(abs(df.final$logFC))+0.25)*-1, max(abs(df.final$logFC))+0.25) +
     theme(plot.title = element_text(size=22),
           axis.title.x=element_blank(),
@@ -277,8 +296,8 @@ plot.gene <- function(df.input, isoform.input, isoform.name) {
 
   # Add geom segments with for loop
   for (i in 1:nrow(isoform.input)) {
-     p <- p + geom_segment(x=isoform.input$start.relative[i], y= 0, 
-                           xend=isoform.input$end.relative[i], yend= 0,
+     p <- p + geom_segment(x=isoform.input$start[i], y= 0, 
+                           xend=isoform.input$end[i], yend= 0,
                            size=5,
                            color="gray")
   }
